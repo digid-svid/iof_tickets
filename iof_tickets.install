@@ -1,0 +1,55 @@
+<?php
+// $Id$ 
+
+/**
+ * @file 
+ */
+
+function iof_tickets_schema() {
+  return array(
+    'uc_order_iof_tickets' => array(
+      'description' => 'IO-Festival related order information',
+      'fields' => array(
+        'order_id' => array(
+          'description' => 'Primary key: the order ID.',
+          'type' => 'serial',
+          'unsigned' => TRUE,
+          'not null' => TRUE,
+        ),
+        'delivery_method' => array(
+          'description' => 'Method for order handling',
+          'type' => 'varchar',
+          'length' => 24,
+          'default' => NULL,
+        ),
+        'customer_cardnumber' => array(
+          'description' => 'Card number for order',
+          'type' => 'int',
+          'size' => 'big',
+          'not null' => FALSE,
+          'default' => NULL,
+        ),
+      ),
+      'primary key' => array('order_id'),
+    ),
+    // </uc_order_iof_tickets>
+  );
+}
+
+/**
+ * Implementation of hook_install() 
+ */
+function iof_tickets_install() {
+  drupal_install_schema('iof_tickets');
+}
+
+/**
+ * Implementation of hook_uninstall() 
+ */
+function iof_tickets_uninstall() {
+  drupal_uninstall_schema('iof_tickets');
+
+  variable_del('iof_tickets_default_ticket_nid');
+  variable_del('iof_tickets_intro_ticket_nid');
+  variable_del('iof_tickets_tokens_nid');
+}

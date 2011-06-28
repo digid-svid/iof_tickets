@@ -1,0 +1,8 @@
+; $Id$ 
+name = Kaartverkoop
+description = Helper module voor kaartverkoop IO-Festival
+package = Studievereniging i.d
+version = 6.x-0.9
+core = 6.x
+dependencies[] = svid_leden
+dependencies[] = uc_order

@@ -1,0 +1,28 @@
+.block-iof_tickets {
+    float: right;
+    border: 1px solid gray;
+    background: #dbdbdb;
+    font-size: 10pt;
+    margin-bottom: 10px;
+}
+
+.block-iof_tickets:after {
+    clear: both;
+    content: ' ';
+    display: block;
+    font-size: 0;
+    line-height: 0;
+    visibility: hidden;
+    width: 0;
+    height: 0;
+}
+
+.block-iof_tickets .block-inner {
+    padding: 2px;
+    padding-left: 28px;
+    background: url('cart.png') left center transparent no-repeat;
+}
+
+.block-iof_tickets .content {
+    line-height: 24px;
+}

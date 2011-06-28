@@ -1,0 +1,345 @@
+<?php
+
+// $Id$
+
+/**
+ * This module provides added functionality to Ubercart for IO-Festival
+ * ticket sales.
+ *
+ * Current functions:
+ * - Simple delivery method selection.
+ * - Minified shopping cart.
+ * - Order pickup system.
+ * - Offline sales integration.
+ */
+
+function iof_tickets_perm() {
+  return array('view iof orders', 'create iof orders');
+}
+
+function iof_tickets_init(){
+  drupal_add_css(drupal_get_path('module', 'iof_tickets') .'/css/cart.css');
+}
+
+function iof_tickets_menu() {
+  $items = array();
+  $items['admin/store/iof-tickets'] = array(
+    'title' => t('IO-Festival Tickets'),
+    'access arguments' => array('view iof orders'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('iof_tickets_customer_lookup_form'),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'iof_tickets.orders.inc',
+  );
+  $items['admin/store/iof-tickets/view'] = array(
+    'title' => t('View'),
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -50,
+  );
+  $items['admin/store/iof-tickets/view/%iof_customer'] = array(
+    'title' => t('View IO-Festival orders'),
+    'access arguments' => array('view iof orders'),
+    'page callback' => 'iof_tickets_customer_lookup_form_results',
+    'page arguments' => array(4),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'iof_tickets.orders.inc',
+  );
+  $items['admin/store/iof-tickets/view/%iof_customer/%'] = array(
+    'title' => t('View IO-Festival orders'),
+    'access arguments' => array('view iof orders'),
+    'page callback' => 'iof_tickets_customer_lookup_form_results',
+    'page arguments' => array(4),
+    'type' => MENU_LOCAL_TASK,
+    'load arguments' => array(5),
+    'file' => 'iof_tickets.orders.inc',
+  );
+  $items['admin/store/iof-tickets/export'] = array(
+    'title' => t('Export'),
+    'access arguments' => array('view iof orders'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('iof_tickets_order_export_form'),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'iof_tickets.orders.inc',
+    'weight' => 0,
+  );
+  $items['admin/store/iof-tickets/export/%'] = array(
+    'title' => t('Export'),
+    'access arguments' => array('view iof orders'),
+    'page callback' => 'iof_tickets_order_export',
+    'page arguments' => array(4),
+    'type' => MENU_CALLBACK,
+    'file' => 'iof_tickets.orders.inc',
+  );
+  $items['admin/store/settings/iof-tickets'] = array(
+    'title' => t('IO-Festival Tickets'),
+    'access arguments' => array('administer store'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('iof_tickets_settings_form'),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'iof_tickets.admin.inc',
+  );
+
+  return $items;
+}
+
+function iof_tickets_block($op = 'list', $delta = 0, $edit = array()) {
+  switch($op) {
+    case 'list':
+      return array(
+        array(
+          'info' => t('Minified shopping cart'),
+          'cache' => BLOCK_CACHE_PER_USER,
+        ),
+      );
+    case 'view':
+      global $user;
+
+      // Do not show the block if the user is not logged in.
+      if ($user->uid === 0) {
+        return FALSE;
+      }
+
+      // Get the product count in the user's shopping cart.
+      $result = db_query('SELECT SUM(qty) FROM {uc_cart_products} WHERE cart_id = %d', $user->uid);
+      if ($result === FALSE) {
+        return FALSE;
+      }
+
+      // Set count to zero if there was no cart found.
+      $cart_items = db_result($result);
+
+      return array(
+        'subject' => t('Shopping cart'),
+        'content' => ($cart_items) ? l($cart_items, 'cart') : '0',
+      );
+    default:
+      break;
+  }
+}
+
+function iof_tickets_theme() {
+  return array(
+    'iof_tickets_order_create_fieldset' => array(
+      'arguments' => array('form' => NULL),
+      'file' => 'iof_tickets.orders.inc'
+    ),
+    'iof_tickets_order_list_fieldset' => array(
+      'arguments' => array('form' => NULL),
+      'file' => 'iof_tickets.orders.inc'
+    ),
+  );
+}
+
+/**
+ * Order integration: hook_order().
+ */
+function iof_tickets_order($op, &$order, $data) {
+  switch ($op) {
+    // Order processing: pre-checkout creation of the order.
+    case 'new':
+      db_query('INSERT INTO {uc_order_iof_tickets} (order_id) VALUES (%d)', $order->order_id);
+      break;
+
+    // Order is being saved:
+    // - post checkout
+    case 'save':
+      $fields = array();
+      $parameters = array();
+
+      $query = "UPDATE {uc_order_iof_tickets} SET ";
+
+      if (!empty($order->delivery_method)) {
+        $fields[] = "delivery_method = '%s'";
+        $parameters[] = $order->delivery_method;
+      }
+
+      if (!empty($order->customer_cardnumber)) {
+        $fields[] = "customer_cardnumber = %d";
+        $parameters[] = $order->customer_cardnumber;
+      }
+
+      $query .= implode(',', $fields);
+      $query .= " WHERE order_id = %d";
+
+      $parameters[] = $order->order_id;
+
+      db_query($query, $parameters);
+      break;
+    
+    // Order is loaded.
+    case 'load':
+      $result = db_query('SELECT * FROM {uc_order_iof_tickets} WHERE order_id = %d', $order->order_id);
+      if ($result === FALSE) {
+        return;
+      }
+
+      $fields = db_fetch_array($result);
+      if ($fields === FALSE) {
+        return;
+      }
+
+      foreach ($fields as $field => $value) {
+        $order->$field = $value;
+      }
+      break;
+    
+    // Order processing: submit at checkout.
+    case 'submit':
+      dpm($order, 'hook-order-op-submit-arg1');
+      dpm($data, 'hook-order-op-submit-arg2');
+      break;
+
+    // Check if order status can be updated.
+    case 'can_update':
+      // Only update to status shipped is previous status was picking.
+      if ($data == 'shipped') {
+        return array(
+          'pass' => ($order->order_status == 'picking'),
+        );
+      }
+      break;
+
+    // Order status has been updated.
+    case 'update':
+      break;
+
+    // Check if order can be deleted.
+    case 'can_delete':
+      break;
+
+    // Order has been deleted.
+    case 'delete':
+      db_query('DELETE FROM {uc_order_iof_tickets} WHERE order_id = %d', $order->order_id);
+      break;
+  }
+}
+/**
+ * Checkout integration: hook_checkout_pane().
+ *
+ * For now, just contains the choice for delivery method, because
+ * the shipping quotes module is too bloated for what we need.
+ */
+function iof_tickets_checkout_pane() {
+  return array(
+    array(
+      'id' => 'iof_customer',
+      'title' => t('Customer information'),
+      'callback' => 'iof_tickets_checkout_pane_customer',
+      'desc' => t('Extended customer information panel'),
+      'weight' => 2,
+    ),
+    array(
+      'id' => 'iof_delivery',
+      'title' => t('Delivery method'),
+      'callback' => 'iof_tickets_checkout_pane_delivery',
+      'desc' => t('Allows the customer to choose the method of delivery'),
+      'weight' => 10,
+    ),
+  );
+}
+
+/**
+ * Delivery panel callback.
+ *
+ * Provide the customer with the choice between picking up their tickets
+ * or receiving them by mail.
+ */
+function iof_tickets_checkout_pane_delivery($op, &$order, $form = array()) {
+  switch ($op) {
+    case 'view':
+      return array(
+        'description' => t('Choose the method by which you want to receive your order.'),
+        'contents' => array(
+          'method' => array(
+            '#type' => 'radios',
+            '#options' => array(
+              'mail' => t('Delivery through the mail.'),
+              'pickup' => t('Pick up your order.'),
+            ),
+            '#default_value' => $order->delivery_method,
+            '#required' => TRUE,
+          ),
+        ),
+      );
+    case 'review':
+      return ($order->delivery_method == 'mail') ? t('Delivery through the mail.') : t('Pick up your order.');
+    case 'process':
+      $order->delivery_method = $form['method'];
+      break;
+  }
+}
+
+/**
+ * Customer panel callback.
+ *
+ * Require student number or people soft registration.
+ */
+function iof_tickets_checkout_pane_customer($op, &$order, $form = array()) {
+  global $user;
+
+  switch ($op) {
+    case 'view':
+      $form = array();
+
+      if ($user->uid == variable_get('aselect_fallback_uid', 0)) {
+        $form['customer_email'] = array(
+          '#title' => t('E-mail address'),
+          '#type' => 'textfield',
+          '#description' => t('You will be contacted at this address with updates on your order.')
+        );
+
+        $form['customer_cardnumber'] = array(
+          '#title' => t('TU Campus Card number'),
+          '#type' => 'textfield',
+          '#default_value' => $order->customer_cardnumber,
+          '#description' => t('The card number on your campus card.'),
+          '#maxlength' => 9,
+          '#disabled' => !empty($user->studentnumber),
+        );
+      }
+
+      $content = array();
+      $content['description'] = t('Provide us with some aditional details to process your order. You will only need to fill in one of the fields below.');
+      $content['contents'] = $form;
+    case 'review':
+      if ($user->uid == variable_get('aselect_fallback_uid', 0)) {
+        return array(
+          'title' => t('Campus Card number'),
+          'data' => $order->customer_cardnumber,
+        );
+      }
+      break;
+    case 'process':
+      $order->customer_email = $form['customer_email'];
+      $order->customer_cardnumber = $form['customer_cardnumber'];
+      break;
+  }
+}
+
+function iof_customer_load($uid, $identifier = NULL) {
+  $customer = user_load($uid);
+  $customer->cardnumber = $identifier;
+  
+  if ($uid === variable_get('aselect_fallback_uid', 0)) {
+    $result = db_query('SELECT o.order_id
+                        FROM {uc_orders} o, {uc_order_iof_tickets} t
+                        WHERE o.uid = %d
+                          AND t.customer_cardnumber = %d
+                          AND o.order_id = t.order_id',
+                       $uid, $identifier);
+  }
+  else {
+    $result = db_query('SELECT order_id FROM {uc_orders} WHERE uid = %d', $uid);
+  }
+
+  if ($result === FALSE) {
+    $customer->orders === FALSE;
+    return $customer;
+  }
+
+  while (($order = db_fetch_array($result)) !== FALSE) {
+    $customer->orders[] = $order['order_id'];
+  }
+
+  return $customer;
+}
